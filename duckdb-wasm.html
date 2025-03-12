@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <title>DuckDB-Wasm with Vue.js</title>
+  <script src="https://unpkg.com/vue@3/dist/vue.global.js"></script>
+  <script>
+    const getDb = async () => {
+        const duckdb = window.duckdbduckdbWasm;
+        // @ts-ignore
+        if (window._db) return window._db;
+        const JSDELIVR_BUNDLES = duckdb.getJsDelivrBundles();
+
+        // Select a bundle based on browser checks
+        const bundle = await duckdb.selectBundle(JSDELIVR_BUNDLES);
+
+        const worker_url = URL.createObjectURL(
+          new Blob([`importScripts("${bundle.mainWorker}");`], {
+            type: "text/javascript",
+          })
+        );
+
+        // Instantiate the asynchronus version of DuckDB-wasm
+        const worker = new Worker(worker_url);
+        // const logger = null //new duckdb.ConsoleLogger();
+        const logger = new duckdb.ConsoleLogger();
+        const db = new duckdb.AsyncDuckDB(logger, worker);
+        await db.instantiate(bundle.mainModule, bundle.pthreadWorker);
+        URL.revokeObjectURL(worker_url);
+
+        await db.registerFileURL(
+        'oc_isamples_pqg.parquet',
+        'https://storage.googleapis.com/opencontext-parquet/oc_isamples_pqg.parquet',
+        duckdb.DuckDBDataProtocol.HTTP,
+        false
+        );
+
+        window._db = db;
+        return db;
+      };
+
+      function waitForDB() {
+        return new Promise((resolve, reject) => {
+            const intervalId = setInterval(() => {
+                if (window._db) {
+                    clearInterval(intervalId);
+                    resolve(window._db);
+                }
+            }, 100); // Check every 100 milliseconds for availability of thatObject
+        });
+    }
+  </script>
+  <script type="module">
+    import * as duckdbduckdbWasm from "https://cdn.jsdelivr.net/npm/@duckdb/duckdb-wasm@1.28.1-dev106.0/+esm";
+    window.duckdbduckdbWasm = duckdbduckdbWasm;
+    getDb().then(async (db) => {
+      // Create a new connection
+      const conn = await db.connect();
+      
+      console.log("Connected to DuckDB, but here");
+    });
+  </script>
+</head>
+<body>
+  <div id="app">
+    <button @click="runQuery">Run Query</button>
+    <pre v-if="results">{{ results }}</pre>
+    <p v-if="error">{{ error }}</p>
+  </div>
+
+
+
+
+  <script>
+    const { createApp, ref } = Vue;
+    
+    createApp({
+      setup() {
+        const duckdb = window.duckdbduckdbWasm;
+        const results = ref(null);
+        const error = ref(null);
+        const db = ref(null);
+        const connection = ref(null);
+
+        async function initializeDuckDB() {
+        try {
+
+            waitForDB().then((dbInstance) => {
+                const conn = dbInstance.connect()
+                db.value = dbInstance;
+                connection.value = conn;
+                console.log("Connection finalized");
+            });
+            
+
+          } catch (err) {
+            error.value = `Initialization Error: ${err.message}`;
+            console.error(err);
+          }
+        }
+
+        initializeDuckDB();
+
+        async function runQuery() {
+          results.value = null;
+          error.value = null;
+          if (!connection.value) {
+            error.value = "DuckDB not initialized.";
+            return;
+          }
+          console.log("Running query");
+          let conn = await connection.value;
+          console.log(conn);
+          try {
+            const queryResult = await conn.query(`SELECT * FROM 'oc_isamples_pqg.parquet' WHERE otype = 'MaterialSampleRecord' LIMIT 10`);
+            results.value = JSON.stringify(queryResult.toArray(), null, 2);
+          } catch (err) {
+            error.value = `Query Error: ${err.message}`;
+            console.error(err);
+          }
+        }
+
+        return {
+          results,
+          error,
+          runQuery,
+        };
+      },
+    }).mount("#app");
+  </script>
+</body>
+</html>
